@@ -4,6 +4,10 @@ from ragcar.tools.utils.base import RagcarFactoryBase, RagcarGenerationBase, Rag
 from ragcar.tools.utils.model_config import get_openai_config, get_clova_config
 from ragcar.utils.prompt_template import PromptTemplate
 
+#logging
+import logging
+logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger("text_generation")
 
 class RagcarTextGenerationFactory(RagcarFactoryBase):
     """
@@ -51,6 +55,8 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
         src: str, 
         model: Optional[Union[str, dict]],
         prompt_template: PromptTemplate,
+        lora_model_dir: Optional[str] = None, #sllm 추가
+        adapter: Optional[str] = None, #lora. qlora 추가
         max_tokens: int=1000,
         temperature: float=0.,
         top_p: float=1.,
@@ -63,9 +69,12 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
         formatting: Optional[bool] = False
     ):
         super().__init__(tool, src, model)
+        self.model_n = model
         self.prompt_template = prompt_template
+        self.lora_model_dir = lora_model_dir
+        self.adapter = adapter
         self.max_tokens = max_tokens
-        self.temperature = 0.1 if src == 'clova' else temperature
+        self.temperature = 0.1 if src == 'clova' or src == 'sllm' else temperature
         self.top_p = top_p
         self.frequency_penalty = 0.1 if src == 'clova' else frequency_penalty
         self.presence_penalty  = int(presence_penalty) if src == 'clova' else presence_penalty
@@ -80,6 +89,7 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
         return [
             "openai",
             "clova",
+            "sllm"
         ]
     
     @staticmethod
@@ -93,6 +103,9 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
             ],
             "clova": [
                 "YOUR_MODEL(https://www.ncloud.com/product/aiService/clovaStudio)"
+            ],
+            "sllm": [
+                "YOUR_MODEL(huggingface.co)"
             ]
         }
     
@@ -170,6 +183,39 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
                         params
                     )
         
+        if self.config.src == "sllm":
+            params = {
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "do_sample":True,
+                "use_cache":True,
+                "return_dict_in_generate":True,
+                "output_attentions":False,
+                "output_hidden_states":False,
+                "output_scores":False,
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+
+            from ragcar.models.sllm import SLLMCompletion
+            LOG.info(f"Loading SLLM model")
+
+            model = SLLMCompletion(
+                self.model_n,
+                self.lora_model_dir,
+                self.adapter,
+                self.stream,
+                self.formatting
+            )
+            LOG.info(f"Loaded SLLM model: {model}")
+            return RagcarSllmTextGeneration(
+                        self.config,
+                        model,
+                        self.prompt_template,
+                        params
+                    )
+
+
         # CLOVA
         if self.config.src == "clova":
             api_conf = get_clova_config(self.config.model_info)
@@ -233,6 +279,8 @@ class RagcarTextGeneration(RagcarGenerationBase):
         self._model = model
         self._prompt_template = prompt_template
         self._params = params
+
+        LOG.info(f"RagcarTextGeneration: {self._model}, {self._prompt_template}, {self._params}")
     
     def predict(self, **kwargs):
         """
@@ -245,10 +293,42 @@ class RagcarTextGeneration(RagcarGenerationBase):
             dict: Contains details of the response and the generated text.
         """
         formatted_prompt = self._prompt_template.format_text(**kwargs)
+        LOG.info(f"formatted_prompt: {formatted_prompt}")
         
         outputs = self._model.create(formatted_prompt, **self._params)
         
         return outputs
+    
+
+class RagcarSllmTextGeneration(RagcarGenerationBase):
+    
+    def __init__(self, config, model, prompt_template, params):
+        super().__init__(config)
+        self._model = model
+        self._prompt_template = prompt_template
+        self._params = params
+
+        LOG.info(f"RagcarTextGeneration: {self._model}, {self._prompt_template}, {self._params}")
+    
+    def predict(self, **kwargs):
+        """
+        Generates a text response based on a formatted prompt template and model parameters.
+
+        Args:
+            **kwargs (dict): Keyword arguments used to fill placeholders in the prompt template.
+
+        Returns:
+            dict: Contains details of the response and the generated text.
+        """
+        formatted_prompt = self._prompt_template.format_text(**kwargs)
+        LOG.info(f"formatted_prompt: {formatted_prompt}")
+        
+        outputs = self._model.create(formatted_prompt, **self._params)
+        
+        if self._model.stream:
+            return outputs
+        else:
+            return list(outputs)
 
 
 class RagcarAsyncTextGeneration(RagcarAsyncGenerationBase):
@@ -270,6 +350,7 @@ class RagcarAsyncTextGeneration(RagcarAsyncGenerationBase):
             dict: Contains details of the response and the generated text, obtained asynchronously.
         """
         formatted_prompt = self._prompt_template.format_text(**kwargs)
+        LOG.info(f"formatted_prompt: {formatted_prompt}")
         
         outputs = await self._model.acreate(formatted_prompt, **self._params)
         
@@ -295,6 +376,7 @@ class RagcarChatGeneration(RagcarGenerationBase):
             dict: Contains details of the chat response and the generated text.
         """
         formatted_messages = self._prompt_template.format_chat(**kwargs)
+        LOG.info(f"formatted_prompt: {formatted_messages}")
         
         outputs = self._model.create(formatted_messages, **self._params)
         
@@ -320,6 +402,7 @@ class RagcarAsyncChatGeneration(RagcarAsyncGenerationBase):
             dict: Contains details of the chat response and the generated text, obtained asynchronously.
         """
         formatted_messages = self._prompt_template.format_chat(**kwargs)
+        LOG.info(f"formatted_prompt: {formatted_messages}")
         
         outputs = await self._model.acreate(formatted_messages, **self._params)
         
