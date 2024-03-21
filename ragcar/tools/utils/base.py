@@ -3,6 +3,7 @@ import unicodedata
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Union, Mapping, List
+ 
 
 import torch
 
@@ -178,3 +179,5 @@ class RagcarAsyncGenerationBase(RagcarToolBase):
 
     async def __call__(self, **kwargs):
         return await self.predict(**kwargs)
+    
+ 

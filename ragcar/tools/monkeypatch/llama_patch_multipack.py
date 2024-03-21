@@ -2,7 +2,7 @@
 Patched LlamaAttention to use torch.nn.functional.scaled_dot_product_attention
 """
 
-from axolotl.monkeypatch.utils import (
+from tools.monkeypatch.utils import (
     patched_prepare_4d_causal_attention_mask,
     patched_prepare_4d_causal_attention_mask_for_sdpa,
 )
