@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import torch
 from typing import Any, Dict, Optional, Tuple, Union, Generator, AsyncGenerator  # noqa: F401
 import time
 
@@ -11,38 +12,34 @@ import logging
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger("sllm")
 import transformers
+from tools.utils.model_config import DictDefault
 from transformers import GenerationConfig, TextStreamer, TextIteratorStreamer
 
 
 class SLLMCompletion(Sllmbase):
     def __init__(
         self, 
+        cfg: DictDefault,
         model_n: str,
-        lora_model_dir: Optional[str] = None,
-        # deepspeed: bool = False,
-        adapter: str = None,  #lora, qlora
         stream: bool = True,
         formatting: bool = False,
         **kwargs,
     ):
         super().__init__(model_n)
-        self.model = model_n
 
-        self.model_config = self._load_model_config()
-        self.tokenizer = self._load_tokenizer(model_n, self.model_config)    
+        self.tokenizer = self._load_tokenizer(cfg)    
         # LOG.info(f"model_n: {model_n}, lora_path: {lora_model_dir}, deepspeed: {deepspeed}, adapter: {adapter}, formatting: {formatting}")
-        LOG.info(f"model_n: {model_n}, lora_path: {lora_model_dir},  adapter: {adapter}, formatting: {formatting}")
+        LOG.info(f"model_n: {model_n}, cfg:{cfg} formatting: {formatting}, stream: {stream}")
         self.device, self.torch_dtype = self._select_device()
+        cfg["device"] = self.device
+        cfg["torch_dtype"] = self.torch_dtype
+
+        LOG.info(f"device: {self.device}, torch_dtype: {self.torch_dtype}")
 
         # model_load
-        self.model, _ = self._load_model(
-                self.tokenizer,
-                self.model_n,
-                self.model_config,
-                lora_model_dir,
-                adapter,
-                **kwargs,
-            )
+        model, _ = self._load_model(cfg=cfg, tokenizer=self.tokenizer)
+        self.model = model.to(self.device, dtype=self.torch_dtype)
+        self.model.eval()
     
     def _calculate_tokens(self, prompt: Optional[list] = None, completion: Optional[str] = None):
         if prompt:
@@ -103,11 +100,43 @@ class SLLMCompletion(Sllmbase):
 
      
 
+    # def create(self, messages, **kwargs) -> Union[str, Dict[str, str], Generator[str, None, None]]:
+    #     LOG.info(f"messages: {messages}")
+    #     batch = self.tokenizer(messages, return_tensors="pt", add_special_tokens=True)
+    #     self.model.eval()
+
+    #     params = self._get_params(**kwargs)
+    #     LOG.info(f"params: {params}")
+
+    #     if self.stream:
+    #         LOG.info("Stream generating...")
+    #         streamer = TextIteratorStreamer(self.tokenizer)
+
+    #         # 스트리밍을 위한 비동기 생성 로직 구현
+    #         async def generate_stream():
+    #             async for output in self.model.agenerate(
+    #                 batch["input_ids"].to(self.device),
+    #                 **params
+    #             ):
+    #                 text_output = self.tokenizer.decode(output, skip_special_tokens=True)
+    #                 yield text_output
+
+    #         return generate_stream()
+    #     else:
+    #         LOG.info("Generating without stream...")
+    #         generated = self.model.generate(
+    #             batch["input_ids"].to(self.device),
+    #             **params
+    #         )
+    #         return self.tokenizer.decode(generated[0], skip_special_tokens=True)
+
     def create(
         self, 
         messages, 
         **kwargs
     ) -> Union[str, Dict[str, str], Generator[str, None, None]]:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        LOG.info(f"device: {device}")
         
         # start_time = time.time()
         LOG.info(f"messages: {messages}")
@@ -118,53 +147,30 @@ class SLLMCompletion(Sllmbase):
         
         LOG.info(f"tokeinzing")
         batch = self.tokenizer(messages, return_tensors="pt", add_special_tokens=True) 
-        self.model.eval()
         
+         
         params = self._get_params(**kwargs)
         LOG.info(f"params: {params}")
 
         LOG.info(f"stream generating ....")
-        streamer = TextIteratorStreamer(self.tokenizer)
 
-        generation_kwargs = {
-            "inputs": batch["input_ids"].to(self.device),
-            "generation_config": GenerationConfig(**params),
-            "streamer": streamer,
-        }
-        
-        yield from self._stream_output(generation_kwargs, streamer)
+        # streamer = TextStreamer(self.tokenizer)
 
-    # def create(
-    #     self, 
-    #     messages, 
-    #     **kwargs
-    # ) -> Union[str, Dict[str, str], Generator[str, None, None]]:
+        # generated = self.model.generate(
+        #         inputs=batch["input_ids"].to(device),
+        #         generation_config=GenerationConfig(**params),
+        #         streamer=streamer,
+        #     )
+        generated_ids = self.model.generate(
+            inputs=batch["input_ids"].to(self.device),
+            generation_config=GenerationConfig(**params),
+        )
+        generated_texts = [self.tokenizer.decode(g, skip_special_tokens=True) for g in generated_ids]
 
-        
-    #     # start_time = time.time()
-    #     LOG.info(f"messages: {messages}")
-    #     default_tokens = {"unk_token": "<unk>", "bos_token": "<s>", "eos_token": "</s>"}
+        # 생성된 텍스트 출력
+        for text in generated_texts:
+            yield text
 
-    #     LOG.info(f"model: {self.model}")
-    #     # model = self.model.to(self.device, self.torch_dtype)
-        
-    #     LOG.info(f"tokeinzing")
-    #     batch = self.tokenizer(messages, return_tensors="pt", add_special_tokens=True) 
-    #     self.model.eval()
-
-         
-    #     params = self._get_params(**kwargs)
-    #     LOG.info(f"params: {params}")
-
-    #     LOG.info(f"stream generating ....")
-    #     streamer = TextIteratorStreamer(self.tokenizer)
-    #     generation_kwargs = {
-    #         "inputs": batch["input_ids"].to(self.device),
-    #         "generation_config": GenerationConfig(**params),
-    #         "streamer": streamer,
-    #     }
-    #     return self._stream_output(generation_kwargs,streamer )
-    
         # if kwargs.get('stream'):
         #     LOG.info(f"stream generating ....")
         #     streamer = TextIteratorStreamer(self.tokenizer)

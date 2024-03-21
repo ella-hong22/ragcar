@@ -24,7 +24,7 @@ from transformers.models.llama.modeling_llama import (
 )
 from xformers.ops import SwiGLU
 
-from axolotl.monkeypatch.utils import get_cu_seqlens_from_pos_ids, set_module_name
+from tools.monkeypatch.utils import get_cu_seqlens_from_pos_ids, set_module_name
 
 try:
     from flash_attn.flash_attn_interface import (  # pylint: disable=ungrouped-imports

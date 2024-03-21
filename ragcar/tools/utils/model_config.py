@@ -4,10 +4,11 @@ import zipfile
 from dataclasses import dataclass
 from dataclasses_json import dataclass_json
 from typing import Optional, Union
-
+import torch
 import gdown
 from dotenv import load_dotenv
-
+from addict import Dict
+from ragcar.models.base import Sllmbase
 
 @dataclass_json
 @dataclass
@@ -61,6 +62,20 @@ class ElasticsearchConfig:
     timeout: Optional[int] = 5
     max_retries: Optional[int] = 2
     retry_on_timeout: Optional[bool] = True
+
+
+
+class DictDefault(Dict):
+    """
+    A Dict that returns None instead of returning empty Dict for missing keys.
+    """
+
+    def __missing__(self, key):
+        return None
+
+    def __or__(self, other):
+        return DictDefault(super().__or__(other))
+    
 
 
 def get_save_dir(save_dir: str = None) -> str:
@@ -172,6 +187,73 @@ def get_openai_config(model_info: Union[str, dict]) -> OpenaiConfig:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
         
         return OpenaiConfig(model_n=model_info, api_key=api_key)
+    
+
+def load_cfg(model_n:str, lora_model_dir:Optional[str] = None, adapter:Optional[str] = None) -> DictDefault:
+    
+    # model_type에 맞게 cfg_dict 불러오기
+    model_config = Sllmbase(model_n).load_model_config()
+    if model_config.model_type == "llama":
+        cfg_dict = {
+            'model_type': 'LlamaForCausalLM', 
+            'tokenizer_type': 'LlamaTokenizer', 
+            'is_llama_derived_model': True, 
+            'load_in_8bit': False, 
+            'load_in_4bit': False, 
+            'strict': False, 
+            'sample_packing': False, 
+            'pad_to_sequence_len': True, 
+            'lora_target_linear': True,  
+            'gradient_checkpointing': True, 
+            'xformers_attention': True, 
+            'flash_attention': False, 
+            's2_attention': None, 
+            'debug': None, 
+            'device': 'cuda:0', 
+            'world_size': 1, 
+            'device_map': None, 
+            'torch_dtype': torch.bfloat16, 
+        }
+
+    elif model_config.model_type == "mistral":
+        cfg_dict = {
+            'model_type': 'MistralForCausalLM', 
+            'tokenizer_type': 'LlamaTokenizer', 
+            'is_mistral_derived_model': True,
+            'load_in_8bit': False, 
+            'load_in_4bit': False, 
+            'sample_packing': False, 
+            'pad_to_sequence_len': True, 
+            'gradient_checkpointing': True, 
+            'early_stopping_patience': None, 
+            'resume_from_checkpoint': None, 
+            'xformers_attention': None, 
+            'flash_attention': True,
+            'world_size': 1, 
+            'eval_causal_lm_metrics': ['sacrebleu', 'comet', 'ter', 'chrf'], 
+            'device': 'cuda:0', 
+            'device_map': None, 
+            'ddp': False, 
+            'torch_dtype': torch.bfloat16, 
+            'model_config_type': 'mistral', 
+            'is_llama_derived_model': False, 
+            'is_falcon_derived_model': False, 
+            }
+
+    else:
+        raise ValueError(f"model_type: {model_config.model_type} is not supported")
+    
+    cfg_dict['base_model'] = model_n
+    cfg_dict['model_config_type'] = model_config.model_type
+    cfg_dict['sample_packing'] = False
+    cfg_dict['trust_remote_code'] = False
+    cfg_dict['lora_model_dir'] = lora_model_dir
+    cfg_dict['adapter'] = adapter
+
+
+    # GPU 설정 
+    
+    return DictDefault(**cfg_dict)
 
 def get_clova_config(model_info: Union[str, dict]) -> ClovastudioConfig:
     """

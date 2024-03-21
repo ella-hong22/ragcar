@@ -1,7 +1,7 @@
 from typing import Optional, Union
 
 from ragcar.tools.utils.base import RagcarFactoryBase, RagcarGenerationBase, RagcarAsyncGenerationBase
-from ragcar.tools.utils.model_config import get_openai_config, get_clova_config
+from ragcar.tools.utils.model_config import get_openai_config, get_clova_config, load_cfg
 from ragcar.utils.prompt_template import PromptTemplate
 
 #logging
@@ -184,6 +184,9 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
                     )
         
         if self.config.src == "sllm":
+
+            cfg = load_cfg(self.model_n, self.lora_model_dir, self.adapter)
+            
             params = {
                 "max_tokens": self.max_tokens,
                 "temperature": self.temperature,
@@ -201,19 +204,17 @@ class RagcarTextGenerationFactory(RagcarFactoryBase):
             LOG.info(f"Loading SLLM model")
 
             model = SLLMCompletion(
-                self.model_n,
-                self.lora_model_dir,
-                self.adapter,
+                cfg,
                 self.stream,
                 self.formatting
             )
             LOG.info(f"Loaded SLLM model: {model}")
-            return RagcarSllmTextGeneration(
-                        self.config,
-                        model,
-                        self.prompt_template,
-                        params
-                    )
+            return RagcarTextGeneration(
+                    self.config,
+                    model,
+                    self.prompt_template,
+                    params
+                )
 
 
         # CLOVA
@@ -300,35 +301,6 @@ class RagcarTextGeneration(RagcarGenerationBase):
         return outputs
     
 
-class RagcarSllmTextGeneration(RagcarGenerationBase):
-    
-    def __init__(self, config, model, prompt_template, params):
-        super().__init__(config)
-        self._model = model
-        self._prompt_template = prompt_template
-        self._params = params
-
-        LOG.info(f"RagcarTextGeneration: {self._model}, {self._prompt_template}, {self._params}")
-    
-    def predict(self, **kwargs):
-        """
-        Generates a text response based on a formatted prompt template and model parameters.
-
-        Args:
-            **kwargs (dict): Keyword arguments used to fill placeholders in the prompt template.
-
-        Returns:
-            dict: Contains details of the response and the generated text.
-        """
-        formatted_prompt = self._prompt_template.format_text(**kwargs)
-        LOG.info(f"formatted_prompt: {formatted_prompt}")
-        
-        outputs = self._model.create(formatted_prompt, **self._params)
-        
-        if self._model.stream:
-            return outputs
-        else:
-            return list(outputs)
 
 
 class RagcarAsyncTextGeneration(RagcarAsyncGenerationBase):
@@ -338,7 +310,8 @@ class RagcarAsyncTextGeneration(RagcarAsyncGenerationBase):
         self._model = model
         self._prompt_template = prompt_template
         self._params = params
-    
+
+        LOG.info(f"RagcarTextGeneration: {self._model}, {self._prompt_template}, {self._params}")
     async def predict(self, **kwargs):
         """
         Asynchronously generates a text response based on a formatted prompt template and model parameters.

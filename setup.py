@@ -33,6 +33,7 @@ setup(
         'xformers==0.0.22',
         'flash-attn==2.3.3',
         'bitsandbytes>=0.43.0',
-        'sentencepiece'
+        'sentencepiece',
+        'addict'
     ],
 )
